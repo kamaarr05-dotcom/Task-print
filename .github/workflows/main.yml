@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 permissions:
@@ -43,38 +42,55 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       # ==========================================
-      # 3. Cari folder project
+      # 3. Extract ZIP dan cari project
       # ==========================================
-      - name: Prepare project
+      - name: Prepare PrintFlow project
         shell: bash
         run: |
           set -euo pipefail
 
+          echo "Mencari file ZIP PrintFlow..."
+
+          ZIP_FILE=$(find . -maxdepth 2 -type f -iname '*.zip' -print -quit)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: File ZIP PrintFlow tidak ditemukan."
+            exit 1
+          fi
+
+          echo "ZIP ditemukan:"
+          echo "$ZIP_FILE"
+
+          rm -rf .printflow-project
+          mkdir -p .printflow-project
+
+          unzip -o "$ZIP_FILE" -d .printflow-project >/dev/null
+
+          echo ""
           echo "Mencari package.json..."
 
-          PACKAGE_FILE=$(find . \
+          PACKAGE_FILE=$(find .printflow-project \
             -type f \
             -name package.json \
-            -not -path './node_modules/*' \
             -print \
             -quit)
 
           if [ -z "$PACKAGE_FILE" ]; then
+            echo "ERROR: package.json tidak ditemukan di dalam ZIP."
             echo ""
-            echo "ERROR: package.json tidak ditemukan."
-            echo ""
-            echo "Isi repository:"
-            find . -maxdepth 3 -type f | sort | head -200
+            echo "Isi hasil ekstraksi:"
+            find .printflow-project -maxdepth 4 -type f | sort | head -200
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PACKAGE_FILE")
 
           echo ""
-          echo "package.json ditemukan:"
-          echo "$PACKAGE_FILE"
-          echo ""
-          echo "PROJECT_DIR=$PROJECT_DIR"
+          echo "=========================================="
+          echo "PRINTFLOW PROJECT DITEMUKAN"
+          echo "=========================================="
+          echo "Project: $PROJECT_DIR"
+          echo "=========================================="
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
@@ -87,7 +103,7 @@ jobs:
           npm install --no-audit --no-fund
 
       # ==========================================
-      # 5. Konfigurasi Supabase
+      # 5. Configure Supabase
       # ==========================================
       - name: Configure Supabase
         working-directory: ${{ env.PROJECT_DIR }}
@@ -117,7 +133,7 @@ jobs:
           echo "Supabase configuration OK."
 
       # ==========================================
-      # 6. GitHub Pages base path
+      # 6. Configure GitHub Pages
       # ==========================================
       - name: Configure GitHub Pages base path
         working-directory: ${{ env.PROJECT_DIR }}
@@ -179,9 +195,9 @@ jobs:
           npm run build
 
       # ==========================================
-      # 9. Verifikasi build
+      # 9. Verify build
       # ==========================================
-      - name: Verify build
+      - name: Verify static build
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
@@ -198,6 +214,7 @@ jobs:
             exit 1
           fi
 
+          echo ""
           echo "=========================================="
           echo "PRINTFLOW BUILD BERHASIL"
           echo "=========================================="
@@ -205,7 +222,7 @@ jobs:
           find dist -maxdepth 2 -type f | sort
 
       # ==========================================
-      # 10. Setup GitHub Pages
+      # 10. Setup Pages
       # ==========================================
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
