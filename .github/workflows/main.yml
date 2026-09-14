@@ -29,7 +29,7 @@ jobs:
 
     steps:
       # ==========================================
-      # 1. Ambil source code
+      # 1. Checkout repository
       # ==========================================
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,20 +43,58 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       # ==========================================
-      # 3. Install dependencies
+      # 3. Cari folder project
+      # ==========================================
+      - name: Prepare project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Mencari package.json..."
+
+          PACKAGE_FILE=$(find . \
+            -type f \
+            -name package.json \
+            -not -path './node_modules/*' \
+            -print \
+            -quit)
+
+          if [ -z "$PACKAGE_FILE" ]; then
+            echo ""
+            echo "ERROR: package.json tidak ditemukan."
+            echo ""
+            echo "Isi repository:"
+            find . -maxdepth 3 -type f | sort | head -200
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PACKAGE_FILE")
+
+          echo ""
+          echo "package.json ditemukan:"
+          echo "$PACKAGE_FILE"
+          echo ""
+          echo "PROJECT_DIR=$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      # ==========================================
+      # 4. Install dependencies
       # ==========================================
       - name: Install dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm install --no-audit --no-fund
 
       # ==========================================
-      # 4. Buat konfigurasi Supabase
-      #    HANYA URL + ANON/PUBLISHABLE KEY
+      # 5. Konfigurasi Supabase
       # ==========================================
       - name: Configure Supabase
+        working-directory: ${{ env.PROJECT_DIR }}
         env:
           SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -79,9 +117,11 @@ jobs:
           echo "Supabase configuration OK."
 
       # ==========================================
-      # 5. Atur base URL GitHub Pages
+      # 6. GitHub Pages base path
       # ==========================================
       - name: Configure GitHub Pages base path
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -123,23 +163,27 @@ jobs:
           PY
 
       # ==========================================
-      # 6. Type check
+      # 7. Type check
       # ==========================================
       - name: Type-check frontend
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm run lint
 
       # ==========================================
-      # 7. Build aplikasi
+      # 8. Build
       # ==========================================
       - name: Build PrintFlow
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm run build
 
       # ==========================================
-      # 8. Pastikan hasil build static
+      # 9. Verifikasi build
       # ==========================================
       - name: Verify build
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -161,21 +205,21 @@ jobs:
           find dist -maxdepth 2 -type f | sort
 
       # ==========================================
-      # 9. Setup GitHub Pages
+      # 10. Setup GitHub Pages
       # ==========================================
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
 
       # ==========================================
-      # 10. Upload hasil build
+      # 11. Upload artifact
       # ==========================================
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: ./dist
+          path: ${{ env.PROJECT_DIR }}/dist
 
   # ============================================
-  # DEPLOY KE GITHUB PAGES
+  # DEPLOY
   # ============================================
   deploy:
     name: Deploy to GitHub Pages
