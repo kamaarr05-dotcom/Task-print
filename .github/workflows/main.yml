@@ -22,42 +22,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      # ==========================================================
-      # 1. CHECKOUT SOURCE
-      # ==========================================================
+      # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
-      # ==========================================================
-      # 2. SETUP NODE.JS 20
-      # ==========================================================
-      # Project menggunakan Node.js + Vite.
-      # Java tidak diperlukan untuk proses build.
+      # 2. Setup Node.js 20
       - name: Setup Node.js 20
         uses: actions/setup-node@v5
         with:
           node-version: "20"
 
-
-      # ==========================================================
-      # 3. CHECK VERSIONS
-      # ==========================================================
+      # 3. Check versions
       - name: Check versions
         run: |
           set -e
-
           echo "Node:"
           node --version
 
           echo "NPM:"
           npm --version
 
-
-      # ==========================================================
-      # 4. VALIDATE SUPABASE CONFIGURATION
-      # ==========================================================
+      # 4. Validate Supabase Secrets
       - name: Validate Supabase configuration
         env:
           SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -77,20 +62,12 @@ jobs:
 
           echo "Supabase configuration detected."
 
-
-      # ==========================================================
-      # 5. INSTALL DEPENDENCIES
-      # ==========================================================
-      # Tidak menggunakan npm cache di setup-node.
-      # Ini menghindari error package manager/cache.
+      # 5. Install dependencies
       - name: Install dependencies
         run: |
           npm install --no-audit --no-fund
 
-
-      # ==========================================================
-      # 6. CREATE BUILD ENVIRONMENT
-      # ==========================================================
+      # 6. Configure Supabase environment
       - name: Configure Supabase environment
         env:
           SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -103,18 +80,11 @@ jobs:
 
           echo ".env.production created."
 
-
-      # ==========================================================
-      # 7. TYPESCRIPT CHECK
-      # ==========================================================
+      # 7. TypeScript check
       - name: TypeScript check
-        run: |
-          npm run lint
+        run: npm run lint
 
-
-      # ==========================================================
-      # 8. BUILD WEB APPLICATION
-      # ==========================================================
+      # 8. Build web application
       - name: Build web application
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -125,10 +95,7 @@ jobs:
         run: |
           npm run build
 
-
-      # ==========================================================
-      # 9. VERIFY BUILD OUTPUT
-      # ==========================================================
+      # 9. Verify build output
       - name: Verify build output
         run: |
           set -e
@@ -148,10 +115,7 @@ jobs:
           echo "Isi dist:"
           find dist -maxdepth 2 -type f | sort
 
-
-      # ==========================================================
-      # 10. UPLOAD PRODUCTION BUILD
-      # ==========================================================
+      # 10. Upload production build
       - name: Upload production build
         uses: actions/upload-artifact@v4
         with:
