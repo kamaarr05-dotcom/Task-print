@@ -1,9 +1,10 @@
-name: Deploy PrintFlow to GitHub Pages + Supabase
+name: Deploy PrintFlow to GitHub Pages
 
 on:
   push:
     branches:
       - main
+
   workflow_dispatch:
 
 permissions:
@@ -17,104 +18,45 @@ concurrency:
 
 env:
   NODE_VERSION: "20"
-  SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
 
 jobs:
-
-  # ============================================================
-  # BUILD FRONTEND + DEPLOY SUPABASE EDGE FUNCTIONS
-  # ============================================================
-  build-and-deploy:
+  build:
+    name: Build PrintFlow
     runs-on: ubuntu-latest
 
     environment:
       name: github-pages
 
     steps:
-
-      # --------------------------------------------------------
-      # 1. CHECKOUT
-      # --------------------------------------------------------
+      # ==========================================
+      # 1. Ambil source code
+      # ==========================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------------------------------------------
-      # 2. NODE.JS
-      # --------------------------------------------------------
+      # ==========================================
+      # 2. Setup Node.js
+      # ==========================================
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # --------------------------------------------------------
-      # 3. FIND PROJECT
-      #
-      # Mendukung:
-      # - package.json langsung di root
-      # - project berada di dalam ZIP
-      # --------------------------------------------------------
-      - name: Prepare project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ -f package.json ]; then
-            echo "Project ditemukan di root repository."
-            echo "PROJECT_DIR=$PWD" >> "$GITHUB_ENV"
-            exit 0
-          fi
-
-          echo "package.json tidak ditemukan di root."
-
-          ZIP_FILE=$(find . -maxdepth 3 -type f -iname '*.zip' | head -n 1)
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: package.json dan ZIP tidak ditemukan."
-            exit 1
-          fi
-
-          echo "ZIP ditemukan:"
-          echo "$ZIP_FILE"
-
-          rm -rf .printflow-project
-          mkdir -p .printflow-project
-
-          unzip -o "$ZIP_FILE" -d .printflow-project >/dev/null
-
-          PACKAGE_FILE=$(find .printflow-project \
-            -type f \
-            -name package.json \
-            -print \
-            -quit)
-
-          if [ -z "$PACKAGE_FILE" ]; then
-            echo "ERROR: package.json tidak ditemukan di dalam ZIP."
-            exit 1
-          fi
-
-          PROJECT_DIR=$(dirname "$PACKAGE_FILE")
-
-          echo "Project directory:"
-          echo "$PROJECT_DIR"
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-      # --------------------------------------------------------
-      # 4. INSTALL DEPENDENCIES
-      # --------------------------------------------------------
+      # ==========================================
+      # 3. Install dependencies
+      # ==========================================
       - name: Install dependencies
-        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm install --no-audit --no-fund
 
-      # --------------------------------------------------------
-      # 5. VALIDATE SUPABASE SECRETS
-      # --------------------------------------------------------
-      - name: Validate Supabase configuration
+      # ==========================================
+      # 4. Buat konfigurasi Supabase
+      #    HANYA URL + ANON/PUBLISHABLE KEY
+      # ==========================================
+      - name: Configure Supabase
         env:
           SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
-        shell: bash
+          SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
           set -euo pipefail
 
@@ -123,42 +65,23 @@ jobs:
             exit 1
           fi
 
-          if [ -z "$SUPABASE_KEY" ]; then
-            echo "ERROR: VITE_SUPABASE_PUBLISHABLE_KEY belum dibuat."
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "ERROR: VITE_SUPABASE_ANON_KEY belum dibuat."
             exit 1
           fi
 
-          echo "Supabase configuration OK."
-
-      # --------------------------------------------------------
-      # 6. CREATE PRODUCTION ENVIRONMENT
-      # --------------------------------------------------------
-      - name: Configure Supabase environment
-        working-directory: ${{ env.PROJECT_DIR }}
-        env:
-          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
           cat > .env.production <<EOF
           VITE_SUPABASE_URL=$SUPABASE_URL
-          VITE_SUPABASE_PUBLISHABLE_KEY=$SUPABASE_KEY
-          VITE_SUPABASE_ANON_KEY=$SUPABASE_KEY
+          VITE_SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY
+          VITE_SUPABASE_PUBLISHABLE_KEY=$SUPABASE_ANON_KEY
           EOF
 
-          echo ".env.production berhasil dibuat."
+          echo "Supabase configuration OK."
 
-      # --------------------------------------------------------
-      # 7. FORCE GITHUB PAGES BASE PATH
-      #
-      # Website:
-      # https://kamaar05-dotcom.github.io/Task-print/
-      # --------------------------------------------------------
+      # ==========================================
+      # 5. Atur base URL GitHub Pages
+      # ==========================================
       - name: Configure GitHub Pages base path
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
         run: |
           set -euo pipefail
 
@@ -199,31 +122,24 @@ jobs:
           print("Base path = /Task-print/")
           PY
 
-      # --------------------------------------------------------
-      # 8. TYPE CHECK
-      #
-      # tsconfig.json sudah diarahkan hanya ke src/
-      # sehingga Deno Edge Functions tidak diperiksa oleh tsc.
-      # --------------------------------------------------------
+      # ==========================================
+      # 6. Type check
+      # ==========================================
       - name: Type-check frontend
-        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm run lint
 
-      # --------------------------------------------------------
-      # 9. BUILD FRONTEND
-      # --------------------------------------------------------
-      - name: Build static frontend
-        working-directory: ${{ env.PROJECT_DIR }}
+      # ==========================================
+      # 7. Build aplikasi
+      # ==========================================
+      - name: Build PrintFlow
         run: |
           npm run build
 
-      # --------------------------------------------------------
-      # 10. VERIFY BUILD
-      # --------------------------------------------------------
-      - name: Verify static build
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
+      # ==========================================
+      # 8. Pastikan hasil build static
+      # ==========================================
+      - name: Verify build
         run: |
           set -euo pipefail
 
@@ -234,131 +150,36 @@ jobs:
 
           if [ -f dist/server.cjs ]; then
             echo "ERROR: dist/server.cjs masih ada."
-            echo "GitHub Pages harus menggunakan frontend static."
+            echo "GitHub Pages membutuhkan frontend static."
             exit 1
           fi
 
           echo "=========================================="
-          echo "STATIC BUILD BERHASIL"
+          echo "PRINTFLOW BUILD BERHASIL"
           echo "=========================================="
 
           find dist -maxdepth 2 -type f | sort
 
-      # --------------------------------------------------------
-      # 11. SETUP GITHUB PAGES
-      # --------------------------------------------------------
+      # ==========================================
+      # 9. Setup GitHub Pages
+      # ==========================================
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
 
-      # --------------------------------------------------------
-      # 12. UPLOAD PAGES ARTIFACT
-      # --------------------------------------------------------
+      # ==========================================
+      # 10. Upload hasil build
+      # ==========================================
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: ${{ env.PROJECT_DIR }}/dist
+          path: ./dist
 
-      # ========================================================
-      # SUPABASE EDGE FUNCTIONS
-      # ========================================================
-
-      # --------------------------------------------------------
-      # 13. VALIDATE SUPABASE DEPLOYMENT SECRETS
-      # --------------------------------------------------------
-      - name: Validate Supabase deployment secrets
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
-            echo "ERROR: SUPABASE_ACCESS_TOKEN belum dibuat."
-            exit 1
-          fi
-
-          if [ -z "$SUPABASE_PROJECT_REF" ]; then
-            echo "ERROR: SUPABASE_PROJECT_REF belum dibuat."
-            exit 1
-          fi
-
-          echo "Supabase deployment secrets OK."
-
-      # --------------------------------------------------------
-      # 14. INSTALL SUPABASE CLI
-      # --------------------------------------------------------
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
-      # --------------------------------------------------------
-      # 15. DEPLOY EDGE FUNCTIONS
-      #
-      # Deno ditangani oleh Supabase CLI.
-      # Tidak diperiksa oleh npm run lint.
-      # --------------------------------------------------------
-      - name: Deploy Supabase Edge Functions
-        working-directory: ${{ env.PROJECT_DIR }}
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          FUNCTIONS="
-          admin-create-user
-          admin-delete-user
-          master-create-tenant
-          ai-task-print
-          "
-
-          for fn in $FUNCTIONS; do
-
-            echo ""
-            echo "=========================================="
-            echo "Deploying: $fn"
-            echo "=========================================="
-
-            if [ ! -f "supabase/functions/$fn/index.ts" ]; then
-              echo "ERROR: File function tidak ditemukan:"
-              echo "supabase/functions/$fn/index.ts"
-              exit 1
-            fi
-
-            supabase functions deploy "$fn" \
-              --project-ref "$SUPABASE_PROJECT_REF" \
-              --no-verify-jwt
-
-            echo "SUCCESS: $fn"
-
-          done
-
-      # --------------------------------------------------------
-      # 16. SUMMARY
-      # --------------------------------------------------------
-      - name: Deployment summary
-        run: |
-          echo ""
-          echo "=========================================="
-          echo "PRINTFLOW READY"
-          echo "=========================================="
-          echo "Frontend : GitHub Pages"
-          echo "Auth     : Supabase Auth"
-          echo "Database : Supabase"
-          echo "Storage  : Supabase Storage"
-          echo "Realtime : Supabase Realtime"
-          echo "Backend  : Supabase Edge Functions"
-          echo "=========================================="
-
-
-  # ============================================================
-  # DEPLOY GITHUB PAGES
-  # ============================================================
-  deploy-pages:
-    needs: build-and-deploy
+  # ============================================
+  # DEPLOY KE GITHUB PAGES
+  # ============================================
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
 
     runs-on: ubuntu-latest
 
@@ -370,7 +191,6 @@ jobs:
       name: github-pages
 
     steps:
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
