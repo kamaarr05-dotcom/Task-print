@@ -1,4 +1,4 @@
-name: Deploy PrintFlow to GitHub Pages
+name: Deploy PrintFlow to GitHub Pages + Supabase
 
 on:
   push:
@@ -17,42 +17,58 @@ concurrency:
 
 env:
   NODE_VERSION: "20"
+  SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
 
 jobs:
-  build:
+
+  # ============================================================
+  # BUILD FRONTEND + DEPLOY SUPABASE EDGE FUNCTIONS
+  # ============================================================
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     environment:
       name: github-pages
 
     steps:
-      # 1. Ambil source code dari repository
+
+      # --------------------------------------------------------
+      # Checkout repository
+      # --------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Install Node.js
+      # --------------------------------------------------------
+      # Setup Node.js
+      # --------------------------------------------------------
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # 3. Cari project PrintFlow
-      #    Mendukung repository yang berisi package.json langsung
-      #    maupun repository yang masih menyimpan project dalam ZIP.
-      - name: Prepare project
+      # --------------------------------------------------------
+      # Find project
+      #
+      # Bisa langsung package.json di root,
+      # atau project masih berada di dalam ZIP.
+      # --------------------------------------------------------
+      - name: Prepare project from ZIP when necessary
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ -f "package.json" ]; then
+          if [ -f package.json ]; then
+            echo "Project ditemukan di root repository."
             echo "PROJECT_DIR=$PWD" >> "$GITHUB_ENV"
             exit 0
           fi
 
-          ZIP_FILE=$(find . -maxdepth 3 -type f -iname "*.zip" | head -n 1)
+          echo "package.json tidak ditemukan di root."
+
+          ZIP_FILE=$(find . -maxdepth 3 -type f -iname '*.zip' | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: package.json atau ZIP project tidak ditemukan."
+            echo "ERROR: package.json dan ZIP tidak ditemukan."
             exit 1
           fi
 
@@ -65,8 +81,9 @@ jobs:
 
           PACKAGE_FILE=$(find .printflow-project \
             -type f \
-            -name "package.json" \
-            -print -quit)
+            -name package.json \
+            -print \
+            -quit)
 
           if [ -z "$PACKAGE_FILE" ]; then
             echo "ERROR: package.json tidak ditemukan di dalam ZIP."
@@ -75,17 +92,21 @@ jobs:
 
           PROJECT_DIR=$(dirname "$PACKAGE_FILE")
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
           echo "Project directory: $PROJECT_DIR"
 
-      # 4. Install dependency
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      # --------------------------------------------------------
+      # Install dependencies
+      # --------------------------------------------------------
       - name: Install dependencies
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm install --no-audit --no-fund
 
-      # 5. Buat environment production
+      # --------------------------------------------------------
+      # Configure Supabase environment untuk Vite
+      # --------------------------------------------------------
       - name: Configure Supabase environment
         working-directory: ${{ env.PROJECT_DIR }}
         env:
@@ -111,88 +132,210 @@ jobs:
           VITE_SUPABASE_ANON_KEY=$SUPABASE_KEY
           EOF
 
-      # 6. Pastikan base URL GitHub Pages benar
-      - name: Configure GitHub Pages base path
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
+          echo "Supabase environment berhasil dibuat."
 
-          path = Path("vite.config.ts")
-
-          if not path.exists():
-              raise SystemExit("ERROR: vite.config.ts tidak ditemukan.")
-
-          content = path.read_text()
-
-          if re.search(r"base\s*:", content):
-              content = re.sub(
-                  r"base\s*:\s*['\"][^'\"]*['\"]",
-                  "base: '/Task-print/'",
-                  content,
-                  count=1
-              )
-          else:
-              content = content.replace(
-                  "return {",
-                  "return {\n    base: '/Task-print/',",
-                  1
-              )
-
-          path.write_text(content)
-
-          print("GitHub Pages base path: /Task-print/")
-
-          PY
-
-      # 7. TypeScript check
-      #    Kalau ada error TypeScript, deployment dihentikan.
-      - name: Check TypeScript
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          npm run lint
-
-      # 8. Build aplikasi
-      - name: Build PrintFlow
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          npm run build
-
-      # 9. Pastikan hasil build benar-benar static
-      - name: Verify build
+      # --------------------------------------------------------
+      # Pastikan base path GitHub Pages benar
+      #
+      # URL:
+      # https://kamaar05-dotcom.github.io/Task-print/
+      # --------------------------------------------------------
+      - name: Ensure GitHub Pages base path
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ ! -f "dist/index.html" ]; then
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("vite.config.ts")
+
+          if not p.exists():
+              raise SystemExit("ERROR: vite.config.ts tidak ditemukan.")
+
+          s = p.read_text()
+
+          if re.search(r'base\s*:', s):
+              s = re.sub(
+                  r'base\s*:\s*[\'"][^\'"]*[\'"]',
+                  "base: '/Task-print/'",
+                  s,
+                  count=1
+              )
+          else:
+              if "return {" in s:
+                  s = s.replace(
+                      "return {",
+                      "return {\n    base: '/Task-print/',",
+                      1
+                  )
+              else:
+                  raise SystemExit(
+                      "ERROR: format vite.config.ts tidak dikenali."
+                  )
+
+          p.write_text(s)
+
+          print("GitHub Pages base path: /Task-print/")
+          PY
+
+      # --------------------------------------------------------
+      # TypeScript check
+      # --------------------------------------------------------
+      - name: Type-check project
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          npm run lint
+
+      # --------------------------------------------------------
+      # Build frontend
+      # --------------------------------------------------------
+      - name: Build static frontend
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          npm run build
+
+      # --------------------------------------------------------
+      # Verify hasil build
+      # --------------------------------------------------------
+      - name: Verify static build
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f dist/index.html ]; then
             echo "ERROR: dist/index.html tidak ditemukan."
             exit 1
           fi
 
-          if [ -f "dist/server.cjs" ]; then
-            echo "ERROR: server.cjs ditemukan."
-            echo "GitHub Pages hanya boleh menjalankan frontend static."
+          if [ -f dist/server.cjs ]; then
+            echo "ERROR: server.cjs masih masuk ke build."
+            echo "GitHub Pages hanya membutuhkan frontend static."
             exit 1
           fi
 
-          echo "Build PrintFlow berhasil."
-          echo "Output: $PWD/dist"
+          echo "Build frontend berhasil."
+          echo "GitHub Pages frontend siap."
 
-      # 10. Setup GitHub Pages
+      # --------------------------------------------------------
+      # Setup GitHub Pages
+      # --------------------------------------------------------
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
 
-      # 11. Upload hasil build
+      # --------------------------------------------------------
+      # Upload frontend artifact
+      # --------------------------------------------------------
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: ${{ env.PROJECT_DIR }}/dist
 
-  deploy:
-    needs: build
+      # ========================================================
+      # SUPABASE EDGE FUNCTIONS
+      # ========================================================
+
+      # --------------------------------------------------------
+      # Validasi secrets Supabase
+      # --------------------------------------------------------
+      - name: Validate Supabase deployment secrets
+        env:
+          ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "$ACCESS_TOKEN" ]; then
+            echo "ERROR: SUPABASE_ACCESS_TOKEN belum dibuat."
+            exit 1
+          fi
+
+          if [ -z "$PROJECT_REF" ]; then
+            echo "ERROR: SUPABASE_PROJECT_REF belum dibuat."
+            exit 1
+          fi
+
+          echo "Supabase deployment secrets tersedia."
+
+      # --------------------------------------------------------
+      # Setup Supabase CLI
+      # --------------------------------------------------------
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # --------------------------------------------------------
+      # Deploy Edge Functions
+      #
+      # Digunakan untuk operasi yang tidak boleh dilakukan
+      # langsung dari browser:
+      #
+      # admin-create-user
+      # admin-delete-user
+      # master-create-tenant
+      # ai-task-print
+      # --------------------------------------------------------
+      - name: Deploy Supabase Edge Functions
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FUNCTIONS="
+          admin-create-user
+          admin-delete-user
+          master-create-tenant
+          ai-task-print
+          "
+
+          for fn in $FUNCTIONS; do
+
+            echo "=========================================="
+            echo "Deploying Edge Function: $fn"
+            echo "=========================================="
+
+            if [ ! -f "supabase/functions/$fn/index.ts" ]; then
+              echo "ERROR: Function $fn tidak ditemukan."
+              exit 1
+            fi
+
+            supabase functions deploy "$fn" \
+              --project-ref "$SUPABASE_PROJECT_REF" \
+              --no-verify-jwt
+
+            echo "Function $fn berhasil di-deploy."
+
+          done
+
+      # --------------------------------------------------------
+      # Selesai
+      # --------------------------------------------------------
+      - name: Build and Supabase deployment summary
+        run: |
+          echo "=========================================="
+          echo "PRINTFLOW DEPLOYMENT READY"
+          echo "=========================================="
+          echo "Frontend : GitHub Pages"
+          echo "Database : Supabase"
+          echo "Auth     : Supabase Auth"
+          echo "Storage  : Supabase Storage"
+          echo "Realtime : Supabase Realtime"
+          echo "Backend  : Supabase Edge Functions"
+          echo "=========================================="
+
+
+  # ============================================================
+  # DEPLOY GITHUB PAGES
+  # ============================================================
+  deploy-pages:
+    needs: build-and-deploy
 
     runs-on: ubuntu-latest
 
@@ -202,16 +345,12 @@ jobs:
 
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      # 12. Deploy ke GitHub Pages
+
+      # --------------------------------------------------------
+      # Deploy artifact ke GitHub Pages
+      # --------------------------------------------------------
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4PRINTFLOW BERHASIL DI-DEPLOY"
-          echo "=========================================="
-          echo ""
-          echo "Website:"
-          echo "${{ steps.deployment.outputs.page_url }}"
-          echo ""
-          echo "=========================================="
+        uses: actions/deploy-pages@v4
