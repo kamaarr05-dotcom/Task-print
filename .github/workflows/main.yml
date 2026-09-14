@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 permissions:
@@ -13,145 +12,88 @@ permissions:
   id-token: write
 
 concurrency:
-  group: github-pages
+  group: printflow-pages
   cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
 
 jobs:
   build:
-    name: Build PrintFlow Frontend
     runs-on: ubuntu-latest
 
-    steps:
+    environment:
+      name: github-pages
 
-      # ==========================================
-      # 1. CHECKOUT REPOSITORY
-      # ==========================================
+    steps:
+      # 1. Ambil source code dari repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ==========================================
-      # 2. SETUP NODE.JS
-      # ==========================================
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v5
+      # 2. Install Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
 
-      # ==========================================
-      # 3. CHECK NODE / NPM
-      # ==========================================
-      - name: Check versions
-        run: |
-          set -e
-
-          echo "Node:"
-          node --version
-
-          echo "NPM:"
-          npm --version
-
-      # ==========================================
-      # 4. FIND AND EXTRACT ZIP PROJECT
-      # ==========================================
+      # 3. Cari project PrintFlow
+      #    Mendukung repository yang berisi package.json langsung
+      #    maupun repository yang masih menyimpan project dalam ZIP.
       - name: Prepare project
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          echo "=========================================="
-          echo "Mencari package.json..."
-          echo "=========================================="
-
-          # Kalau package.json sudah langsung di root
           if [ -f "package.json" ]; then
-
-            echo "package.json ditemukan di root."
-
-            PROJECT_DIR="$(pwd)"
-
-          else
-
-            echo "package.json tidak ditemukan di root."
-            echo "Mencari file ZIP..."
-
-            ZIP_FILE=$(find . -maxdepth 3 -type f -iname "*.zip" | head -n 1)
-
-            if [ -z "$ZIP_FILE" ]; then
-              echo ""
-              echo "ERROR: ZIP project tidak ditemukan."
-              echo ""
-              echo "Isi repository:"
-              find . -maxdepth 3 -type f | sort
-              exit 1
-            fi
-
-            echo ""
-            echo "ZIP ditemukan:"
-            echo "$ZIP_FILE"
-
-            # Folder extract
-            rm -rf .printflow-project
-            mkdir -p .printflow-project
-
-            echo ""
-            echo "Extract ZIP..."
-
-            unzip -o "$ZIP_FILE" -d .printflow-project
-
-            echo ""
-            echo "Mencari package.json..."
-
-            PACKAGE_FILE=$(find .printflow-project \
-              -type f \
-              -name "package.json" \
-              -print -quit)
-
-            if [ -z "$PACKAGE_FILE" ]; then
-
-              echo ""
-              echo "ERROR: package.json tidak ditemukan di dalam ZIP."
-              echo ""
-              echo "Isi ZIP:"
-              find .printflow-project -maxdepth 5 -type f | sort
-
-              exit 1
-            fi
-
-            PROJECT_DIR="$(dirname "$PACKAGE_FILE")"
-
-            echo ""
-            echo "Project ditemukan:"
-            echo "$PROJECT_DIR"
-
+            echo "PROJECT_DIR=$PWD" >> "$GITHUB_ENV"
+            exit 0
           fi
 
-          echo ""
+          ZIP_FILE=$(find . -maxdepth 3 -type f -iname "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: package.json atau ZIP project tidak ditemukan."
+            exit 1
+          fi
+
+          echo "ZIP ditemukan: $ZIP_FILE"
+
+          rm -rf .printflow-project
+          mkdir -p .printflow-project
+
+          unzip -o "$ZIP_FILE" -d .printflow-project >/dev/null
+
+          PACKAGE_FILE=$(find .printflow-project \
+            -type f \
+            -name "package.json" \
+            -print -quit)
+
+          if [ -z "$PACKAGE_FILE" ]; then
+            echo "ERROR: package.json tidak ditemukan di dalam ZIP."
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PACKAGE_FILE")
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo ""
-          echo "=========================================="
-          echo "PROJECT DIRECTORY"
-          echo "=========================================="
+          echo "Project directory: $PROJECT_DIR"
 
-          echo "$PROJECT_DIR"
+      # 4. Install dependency
+      - name: Install dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          npm install --no-audit --no-fund
 
-          echo ""
-          echo "File project:"
-          find "$PROJECT_DIR" -maxdepth 2 -type f | sort | head -200
-
-          echo ""
-          echo "package.json:"
-          cat "$PROJECT_DIR/package.json"
-
-      # ==========================================
-      # 5. VALIDATE SUPABASE
-      # ==========================================
-      - name: Validate Supabase configuration
+      # 5. Buat environment production
+      - name: Configure Supabase environment
+        working-directory: ${{ env.PROJECT_DIR }}
         env:
           SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           if [ -z "$SUPABASE_URL" ]; then
             echo "ERROR: VITE_SUPABASE_URL belum dibuat di GitHub Secrets."
@@ -163,55 +105,17 @@ jobs:
             exit 1
           fi
 
-          echo "Supabase configuration OK."
-
-      # ==========================================
-      # 6. INSTALL DEPENDENCIES
-      # ==========================================
-      - name: Install dependencies
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          set -e
-
-          echo "Installing dependencies..."
-
-          npm install --no-audit --no-fund
-
-      # ==========================================
-      # 7. CREATE SUPABASE ENVIRONMENT
-      # ==========================================
-      - name: Configure Supabase environment
-        working-directory: ${{ env.PROJECT_DIR }}
-        env:
-          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
-        run: |
-          set -e
-
           cat > .env.production <<EOF
-          VITE_SUPABASE_URL=${SUPABASE_URL}
-          VITE_SUPABASE_PUBLISHABLE_KEY=${SUPABASE_KEY}
-          VITE_SUPABASE_ANON_KEY=${SUPABASE_KEY}
+          VITE_SUPABASE_URL=$SUPABASE_URL
+          VITE_SUPABASE_PUBLISHABLE_KEY=$SUPABASE_KEY
+          VITE_SUPABASE_ANON_KEY=$SUPABASE_KEY
           EOF
 
-          echo ".env.production created."
-
-      # ==========================================
-      # 8. CONFIGURE VITE FOR GITHUB PAGES
-      #
-      # Repository:
-      # kamaar05-dotcom/Task-print
-      #
-      # URL:
-      # https://kamaar05-dotcom.github.io/Task-print/
-      # ==========================================
-      - name: Configure Vite base path
+      # 6. Pastikan base URL GitHub Pages benar
+      - name: Configure GitHub Pages base path
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
-          set -e
-
-          echo "Configuring Vite base path..."
-
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -219,145 +123,92 @@ jobs:
           path = Path("vite.config.ts")
 
           if not path.exists():
-              print("vite.config.ts tidak ditemukan.")
-              print("Membuat vite.config.ts baru...")
+              raise SystemExit("ERROR: vite.config.ts tidak ditemukan.")
 
-              path.write_text(
-                  """import { defineConfig } from 'vite';
-          import react from '@vitejs/plugin-react';
-          import tailwindcss from '@tailwindcss/vite';
+          content = path.read_text()
 
-          export default defineConfig({
-            base: '/Task-print/',
-            plugins: [react(), tailwindcss()],
-          });
-          """,
-                  encoding="utf-8"
+          if re.search(r"base\s*:", content):
+              content = re.sub(
+                  r"base\s*:\s*['\"][^'\"]*['\"]",
+                  "base: '/Task-print/'",
+                  content,
+                  count=1
+              )
+          else:
+              content = content.replace(
+                  "return {",
+                  "return {\n    base: '/Task-print/',",
+                  1
               )
 
-          else:
-              text = path.read_text(encoding="utf-8")
+          path.write_text(content)
 
-              # Jika sudah ada base, ganti nilainya
-              if re.search(r"base\s*:", text):
-                  text = re.sub(
-                      r"base\s*:\s*['\"][^'\"]*['\"]",
-                      "base: '/Task-print/'",
-                      text
-                  )
+          print("GitHub Pages base path: /Task-print/")
 
-              # Jika belum ada base, masukkan ke return object
-              else:
-                  text = text.replace(
-                      "return {",
-                      "return {\n    base: '/Task-print/',",
-                      1
-                  )
-
-              path.write_text(text, encoding="utf-8")
-
-          print("")
-          print("vite.config.ts:")
-          print(path.read_text(encoding="utf-8"))
           PY
 
-      # ==========================================
-      # 9. BUILD FRONTEND ONLY
-      #
-      # PENTING:
-      # Tidak menggunakan npm run build karena
-      # script project juga membuild server.ts.
-      #
-      # GitHub Pages hanya membutuhkan frontend.
-      # ==========================================
-      - name: Build frontend
-        working-directory: ${{ env.PROJECT_DIR }}
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
-        run: |
-          set -e
-
-          echo "Building Vite frontend..."
-
-          npx vite build
-
-      # ==========================================
-      # 10. VERIFY DIST
-      # ==========================================
-      - name: Verify frontend build
+      # 7. TypeScript check
+      #    Kalau ada error TypeScript, deployment dihentikan.
+      - name: Check TypeScript
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          set -e
+          npm run lint
 
-          if [ ! -d "dist" ]; then
-            echo "ERROR: folder dist tidak ditemukan."
-            exit 1
-          fi
+      # 8. Build aplikasi
+      - name: Build PrintFlow
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          npm run build
+
+      # 9. Pastikan hasil build benar-benar static
+      - name: Verify build
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
 
           if [ ! -f "dist/index.html" ]; then
             echo "ERROR: dist/index.html tidak ditemukan."
             exit 1
           fi
 
-          echo ""
-          echo "=========================================="
-          echo "BUILD BERHASIL"
-          echo "=========================================="
+          if [ -f "dist/server.cjs" ]; then
+            echo "ERROR: server.cjs ditemukan."
+            echo "GitHub Pages hanya boleh menjalankan frontend static."
+            exit 1
+          fi
 
-          echo ""
-          echo "Isi dist:"
-          find dist -maxdepth 3 -type f | sort
+          echo "Build PrintFlow berhasil."
+          echo "Output: $PWD/dist"
 
-      # ==========================================
-      # 11. CONFIGURE GITHUB PAGES
-      # ==========================================
+      # 10. Setup GitHub Pages
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
 
-      # ==========================================
-      # 12. UPLOAD PAGES ARTIFACT
-      # ==========================================
+      # 11. Upload hasil build
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v3
         with:
           path: ${{ env.PROJECT_DIR }}/dist
 
-  # ============================================
-  # DEPLOY JOB
-  # ============================================
   deploy:
-    name: Deploy PrintFlow
-    runs-on: ubuntu-latest
-
     needs: build
 
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
 
     permissions:
       pages: write
       id-token: write
 
-    steps:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
-      # ==========================================
-      # 13. DEPLOY TO GITHUB PAGES
-      # ==========================================
+    steps:
+      # 12. Deploy ke GitHub Pages
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
-
-      # ==========================================
-      # 14. SHOW WEBSITE URL
-      # ==========================================
-      - name: Show application URL
-        run: |
-          echo ""
-          echo "=========================================="
-          echo "PRINTFLOW BERHASIL DI-DEPLOY"
+        uses: actions/deploy-pages@v4PRINTFLOW BERHASIL DI-DEPLOY"
           echo "=========================================="
           echo ""
           echo "Website:"
